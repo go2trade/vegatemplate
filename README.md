@@ -277,6 +277,19 @@ to store:
 - `context.spread(legs, metadata)`
   Queues a multi-leg order, typically for option spreads.
 
+## Multi-Ticker Backtests
+
+When a backtest is configured with multiple tickers (up to 5):
+- The simulation runs sequentially. `onBar(bar, context)` is triggered **only** for the primary ticker (the first ticker in your selected assets list).
+- Secondary tickers act as market indicators/references.
+- At any given timestamp, the data stream updates secondary ticker prices **before** the primary ticker triggers `onBar`.
+- To access the latest price and state of secondary tickers, read the `bar.tickers` dictionary:
+  - In Python: `bar["tickers"]["TSLA"]` or `bar.get("tickers", {}).get("TSLA")`
+  - In JavaScript: `bar.tickers.TSLA`
+- To search for option contracts on a secondary symbol, pass the `"symbol"` filter to `context.find_option` / `context.findOption`:
+  - Python: `context.find_option({"symbol": "TSLA", "right": "C", "targetDelta": 0.25})`
+  - JavaScript: `context.findOption({symbol: "TSLA", right: "C", targetDelta: 0.25})`
+
 ## Option Search Filters
 
 Use `context.findOption(...)` or `context.findOptions(...)` with any mix of:
