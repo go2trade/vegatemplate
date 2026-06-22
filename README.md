@@ -41,6 +41,11 @@ follow these rules:
 - `data/nvda_stock_15m.json`: example 15-minute OHLC data shape
 - `data/nvda_stock_1d.json`: example daily OHLC data shape
 
+Important: `strategy-js/` and `strategy-py/` must live directly at the
+repository root. Do not leave them nested inside an extra top-level folder
+created by `git clone`, GitHub download ZIP extraction, or manual copying. The
+runner looks for these entrypoints from the repo root.
+
 The files in `data/` are examples for AI tools and developers. They are useful
 for understanding the bar format, but the platform will generate the real
 dataset and stream it to the strategy during a backtest run.
@@ -619,9 +624,12 @@ module.exports = { init, onBar };
 ## Deployment
 
 1. Fork or clone this template repo.
-2. Edit either `strategy-js/strategy.js` or `strategy-py/strategy.py`.
-3. Add helper modules, dependencies, and optional build config if needed.
-4. Commit and push the repository.
-5. Submit the repo URL and branch or commit hash to the backtest platform.
-6. Choose symbol, date range, timeframe, and execution settings.
-7. Run the backtest and inspect the report;
+2. Make sure `strategy-js/` and `strategy-py/` are still at the repo root after
+   cloning. A layout like `my-repo/strategy-js/...` is correct; an extra nested
+   wrapper folder above `strategy-js/` or `strategy-py/` is not.
+3. Edit either `strategy-js/strategy.js` or `strategy-py/strategy.py`.
+4. Add helper modules, dependencies, and optional build config if needed.
+5. Commit and push the repository.
+6. Submit the repo URL and branch or commit hash to the backtest platform.
+7. Choose symbol, date range, timeframe, and execution settings.
+8. Run the backtest and inspect the report;
