@@ -5,13 +5,16 @@ This repository is the starter template for VegaOptions backtest strategies.
 It is written for both human developers and AI coding tools such as Codex,
 Cursor, Claude, or any IDE agent that needs precise instructions.
 
-The goal is simple:
+The platform supports two distinct run types:
 
-- write a strategy in JavaScript or Python
-- receive bar-by-bar market data from the backtest platform
-- inspect option chains and Greeks
-- place stock, option, or multi-leg spread orders
-- review the generated performance report
+- **Backtest**: write a structured strategy in JavaScript or Python, receive
+  bar-by-bar data, place simulated orders, and review a performance report.
+- **Research**: run a free-form Python or JavaScript program over the raw
+  historical JSONL data and return any valid JSON result.
+
+Backtests use the `init`, `onBar`, and `onEnd` lifecycle documented below.
+Research scripts do not use that lifecycle and are documented in
+[Free-form Research](#free-form-research).
 
 ## What AI Tools Should Know First
 
@@ -38,6 +41,8 @@ follow these rules:
 
 - `strategy-js/strategy.js`: JavaScript strategy entrypoint
 - `strategy-py/strategy.py`: Python strategy entrypoint
+- `research-js/research.js`: optional free-form JavaScript research entrypoint
+- `research-py/research.py`: optional free-form Python research entrypoint
 - `data/nvda_stock_15m.json`: example 15-minute OHLC data shape
 - `data/nvda_stock_1d.json`: example daily OHLC data shape
 
@@ -49,6 +54,77 @@ runner looks for these entrypoints from the repo root.
 The files in `data/` are examples for AI tools and developers. They are useful
 for understanding the bar format, but the platform will generate the real
 dataset and stream it to the strategy during a backtest run.
+
+## Free-form Research
+
+Submit the job with `"runType": "research"` to execute a research script
+directly. The script does not export functions and does not implement
+`init`, `onBar`, or `onEnd`. It can organize its analysis in any way, read the
+dataset multiple times, test competing explanations, and change direction
+based on intermediate calculations.
+
+Supported entrypoints:
+
+- Python: `research-py/research.py` or `research.py`
+- JavaScript: `research-js/research.js`, `.mjs`, or `.cjs`, or the same names
+  at the repository root
+
+The runner provides:
+
+- `RESEARCH_DATASET_PATH`: chronologically merged JSONL input
+- `RESEARCH_OUTPUT_PATH`: required destination for the final JSON value
+- `RESEARCH_PARAMS_JSON`: the data request parameters as JSON
+
+Each input line retains the provider fields and includes an injected `symbol`
+field. Read it line by line for large datasets. The script must exit with code
+zero and write valid JSON to `RESEARCH_OUTPUT_PATH`. Standard output and error
+are captured in the job logs. Internet access is not available at runtime.
+
+Python:
+
+```py
+import json
+import os
+
+dataset_path = os.environ["RESEARCH_DATASET_PATH"]
+output_path = os.environ["RESEARCH_OUTPUT_PATH"]
+
+prices = []
+with open(dataset_path, encoding="utf-8") as rows:
+    for line in rows:
+        row = json.loads(line)
+        price = row.get("close", row.get("c", row.get("price")))
+        if price is not None:
+            prices.append(float(price))
+
+result = {
+    "observations": len(prices),
+    "minimum": min(prices) if prices else None,
+    "maximum": max(prices) if prices else None,
+}
+with open(output_path, "w", encoding="utf-8") as output:
+    json.dump(result, output)
+```
+
+JavaScript:
+
+```js
+const fs = require("fs");
+
+const rows = fs.readFileSync(process.env.RESEARCH_DATASET_PATH, "utf8")
+  .split(/\r?\n/)
+  .filter(Boolean)
+  .map(JSON.parse);
+
+const result = {
+  observations: rows.length,
+  symbols: [...new Set(rows.map((row) => row.symbol))],
+};
+fs.writeFileSync(process.env.RESEARCH_OUTPUT_PATH, JSON.stringify(result));
+```
+
+The platform validates the file and publishes it under `result` in the final
+`results.json` response.
 
 ## Execution Model
 
