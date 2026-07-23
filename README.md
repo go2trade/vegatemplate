@@ -16,6 +16,24 @@ Backtests use the `init`, `onBar`, and `onEnd` lifecycle documented below.
 Research scripts do not use that lifecycle and are documented in
 [Free-form Research](#free-form-research).
 
+## Submitting Project Code
+
+Each job accepts exactly one project source:
+
+- `repoUrl`: a Git repository.
+- `projectZipUrl`: a publicly downloadable HTTP(S) ZIP.
+- `projectZipBase64`: the ZIP bytes encoded as raw Base64 or as
+  `data:application/zip;base64,...`.
+
+MCP clients should prefer `projectZipBase64` when they can create an archive
+but cannot reliably host it at a public URL. The Base64 value is accepted by
+both `run_backtest` and `run_research`, is never returned in job history or
+logs, and is used instead of—not together with—`projectZipUrl`.
+
+The decoded ZIP is limited to 50 MB. Existing archive protections still apply:
+at most 10,000 entries and 100 MB after extraction, with encrypted entries,
+symlinks, and paths outside the extraction directory rejected.
+
 ## What AI Tools Should Know First
 
 If you ask an AI tool to write or modify a strategy in this template, it should
