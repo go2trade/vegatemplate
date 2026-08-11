@@ -4,6 +4,7 @@ const readline = require("readline");
 const datasetPath = process.env.RESEARCH_DATASET_PATH;
 const outputPath = process.env.RESEARCH_OUTPUT_PATH;
 const params = JSON.parse(process.env.RESEARCH_PARAMS_JSON || "{}");
+const { dateFrom, dateTo } = params;
 
 async function main() {
   const countsBySymbol = {};
@@ -29,7 +30,7 @@ async function main() {
 
   fs.writeFileSync(outputPath, JSON.stringify({
     thesis: "Describe the idea being tested here.",
-    request: { assets: params.assets, interval: params.interval },
+    request: { assets: params.assets, dateFrom, dateTo, interval: params.interval },
     observationsBySymbol: countsBySymbol,
     priceRanges,
   }, null, 2));

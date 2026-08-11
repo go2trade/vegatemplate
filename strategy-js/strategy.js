@@ -9,9 +9,15 @@
  * - context.spread(legs, metadata): send a multi-leg order
  */
 
+// Installed from strategy-js/package.json. This calculation is local and does
+// not perform any network request.
+const { EMA } = require("technicalindicators");
+const EMA_PERIOD = 10;
+
 function init(context) {
     context.log("Option Expert strategy initialized");
     context.entered = false;
+    context.primaryPrices = [];
 }
 
 function onBar(bar, context) {
@@ -24,6 +30,14 @@ function onBar(bar, context) {
     // 1. Access the primary asset bar data
     const primarySymbol = bar.symbol;
     const primaryPrice = bar.price;
+    context.primaryPrices.push(primaryPrice);
+    if (context.primaryPrices.length > EMA_PERIOD) context.primaryPrices.shift();
+    const emaValues = EMA.calculate({ period: EMA_PERIOD, values: context.primaryPrices });
+    const ema = emaValues.at(-1);
+    if (ema === undefined) {
+        context.log(`Collecting ${EMA_PERIOD}-bar EMA history for ${primarySymbol}.`);
+        return;
+    }
 
     // 2. Access the secondary asset(s) data via bar.tickers
     const tickers = bar.tickers || {};
@@ -36,10 +50,10 @@ function onBar(bar, context) {
     }
 
     const tslaPrice = tslaBar.price;
-    context.log(`Current ${primarySymbol} Price: ${primaryPrice} | TSLA Price: ${tslaPrice}`);
+    context.log(`Current ${primarySymbol} Price: ${primaryPrice} | ${EMA_PERIOD}-EMA: ${ema.toFixed(2)} | TSLA Price: ${tslaPrice}`);
 
     // 3. Decision logic: if TSLA price crosses a threshold, open a spread on TSLA or primary symbol
-    if (!context.entered && tslaPrice > 200.0) {
+    if (!context.entered && primaryPrice > ema && tslaPrice > 200.0) {
         // Get expiration dates for TSLA options
         const tslaChain = tslaBar.optionChain || {};
         const tslaExpirations = Object.keys(tslaChain);

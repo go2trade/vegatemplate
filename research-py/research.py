@@ -2,11 +2,14 @@
 
 import json
 import os
+from datetime import datetime
 
 
 dataset_path = os.environ["RESEARCH_DATASET_PATH"]
 output_path = os.environ["RESEARCH_OUTPUT_PATH"]
 params = json.loads(os.environ.get("RESEARCH_PARAMS_JSON", "{}"))
+date_from = datetime.strptime(params["dateFrom"], "%Y%m%d").date()
+date_to = datetime.strptime(params["dateTo"], "%Y%m%d").date()
 
 counts_by_symbol: dict[str, int] = {}
 price_ranges: dict[str, dict[str, float]] = {}
@@ -30,6 +33,8 @@ result = {
     "thesis": "Describe the idea being tested here.",
     "request": {
         "assets": params.get("assets"),
+        "dateFrom": date_from.isoformat(),
+        "dateTo": date_to.isoformat(),
         "interval": params.get("interval"),
     },
     "observationsBySymbol": counts_by_symbol,

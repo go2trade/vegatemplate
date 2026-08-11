@@ -1,0 +1,10 @@
+{
+  "name": "vegaoptions-backtest-strategy",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "description": "Dependencies for the VegaOptions JavaScript backtest strategy",
+  "dependencies": {
+    "technicalindicators": "3.1.0"
+  }
+}

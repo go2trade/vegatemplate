@@ -16,23 +16,18 @@ Backtests use the `init`, `onBar`, and `onEnd` lifecycle documented below.
 Research scripts do not use that lifecycle and are documented in
 [Free-form Research](#free-form-research).
 
-## Submitting Project Code
+## AI Coding Contract
 
-Each job accepts exactly one project source:
+This document is a contract for the code in this repository. Focus on writing
+the strategy or research program; do not add infrastructure, deployment,
+credentials, network clients, scheduled tasks, or market-data download code.
 
-- `repoUrl`: a Git repository.
-- `projectZipUrl`: a publicly downloadable HTTP(S) ZIP.
-- `projectZipBase64`: the ZIP bytes encoded as raw Base64 or as
-  `data:application/zip;base64,...`.
+For a backtest, export a callable `onBar(bar, context)` function. `init` and
+`onEnd` are optional. Keep all trading decisions inside `onBar`.
 
-MCP clients should prefer `projectZipBase64` when they can create an archive
-but cannot reliably host it at a public URL. The Base64 value is accepted by
-both `run_backtest` and `run_research`, is never returned in job history or
-logs, and is used instead of—not together with—`projectZipUrl`.
-
-The decoded ZIP is limited to 50 MB. Existing archive protections still apply:
-at most 10,000 entries and 100 MB after extraction, with encrypted entries,
-symlinks, and paths outside the extraction directory rejected.
+For research, write a program that reads the input JSONL path and writes one
+valid JSON value to the output path described in
+[Free-form Research](#free-form-research).
 
 ## What AI Tools Should Know First
 
@@ -50,24 +45,53 @@ follow these rules:
 7. For option orders, always specify enough contract identity:
    `symbol`, `expiration`, `strike`, and `right`.
 8. Use `context.spread(...)` for multi-leg option trades.
-9. Do not rely on internet access or external APIs at runtime. The strategy
-   receives all market data from the backtest runner.
+9. Do not use network clients, shell commands, subprocesses, or external APIs.
+   The strategy receives the market data it needs in each callback.
 10. Do not try to place executable orders in `init()` or `onEnd()`. Only orders
-    produced during `onBar()` are executed by the runner.
+    produced during `onBar()` are evaluated by the simulation.
 
 ## Repository Structure
 
 - `strategy-js/strategy.js`: JavaScript strategy entrypoint
+- `strategy-js/package.json`: optional JavaScript dependencies
 - `strategy-py/strategy.py`: Python strategy entrypoint
+- `strategy-py/requirements.txt`: optional Python dependencies
 - `research-js/research.js`: optional free-form JavaScript research entrypoint
 - `research-py/research.py`: optional free-form Python research entrypoint
+- `bundle-manifest.json`: selects the single code section to run
 - `data/nvda_stock_15m.json`: example 15-minute OHLC data shape
 - `data/nvda_stock_1d.json`: example daily OHLC data shape
 
-Important: `strategy-js/` and `strategy-py/` must live directly at the
-repository root. Do not leave them nested inside an extra top-level folder
-created by `git clone`, GitHub download ZIP extraction, or manual copying. The
-runner looks for these entrypoints from the repo root.
+Keep `strategy-js/` and `strategy-py/` directly at the project root. The
+platform accepts a root `strategy.js` / `strategy.py` too. When several code
+folders exist, `bundle-manifest.json` selects exactly one section; the other
+folders remain in the project but are not executed.
+
+Set `"active": "true"` inside either the `backtest` or `research` section.
+If neither section is active, the first section in the file is selected. More
+than one active section is invalid, and the selected section must match the
+job's `runType`.
+
+```json
+{
+  "backtest": {
+    "active": "true",
+    "language": "js",
+    "entrypoint": "strategy-js/strategy.js",
+    "workingDirectory": "strategy-js"
+  },
+  "research": {
+    "language": "py",
+    "entrypoint": "research-py/research.py",
+    "workingDirectory": "research-py"
+  }
+}
+```
+
+Move `"active": "true"` to the other section to switch the selected
+implementation. The job language must match the `language` declared in the
+selected section. Add dependencies to the included `requirements.txt` or
+`package.json` as needed.
 
 The files in `data/` are examples for AI tools and developers. They are useful
 for understanding the bar format, but the platform will generate the real
@@ -87,25 +111,34 @@ Supported entrypoints:
 - JavaScript: `research-js/research.js`, `.mjs`, or `.cjs`, or the same names
   at the repository root
 
-The runner provides:
+The program receives:
 
 - `RESEARCH_DATASET_PATH`: chronologically merged JSONL input
 - `RESEARCH_OUTPUT_PATH`: required destination for the final JSON value
 - `RESEARCH_PARAMS_JSON`: the data request parameters as JSON
 
-Each input line retains the provider fields and includes an injected `symbol`
+Use `dateFrom` and `dateTo` from `RESEARCH_PARAMS_JSON` as the analysis range;
+do not hard-code dates in a research program. They are supplied in `YYYYMMDD`
+format.
+
+Each input line retains the source fields and includes an injected `symbol`
 field. Read it line by line for large datasets. The script must exit with code
 zero and write valid JSON to `RESEARCH_OUTPUT_PATH`. Standard output and error
-are captured in the job logs. Internet access is not available at runtime.
+are captured in the job logs. Research code is subject to the same network and
+CLI/process restrictions as a backtest strategy.
 
 Python:
 
 ```py
 import json
 import os
+from datetime import datetime
 
 dataset_path = os.environ["RESEARCH_DATASET_PATH"]
 output_path = os.environ["RESEARCH_OUTPUT_PATH"]
+params = json.loads(os.environ["RESEARCH_PARAMS_JSON"])
+date_from = datetime.strptime(params["dateFrom"], "%Y%m%d").date()
+date_to = datetime.strptime(params["dateTo"], "%Y%m%d").date()
 
 prices = []
 with open(dataset_path, encoding="utf-8") as rows:
@@ -128,6 +161,8 @@ JavaScript:
 
 ```js
 const fs = require("fs");
+const params = JSON.parse(process.env.RESEARCH_PARAMS_JSON);
+const { dateFrom, dateTo } = params;
 
 const rows = fs.readFileSync(process.env.RESEARCH_DATASET_PATH, "utf8")
   .split(/\r?\n/)
@@ -137,6 +172,7 @@ const rows = fs.readFileSync(process.env.RESEARCH_DATASET_PATH, "utf8")
 const result = {
   observations: rows.length,
   symbols: [...new Set(rows.map((row) => row.symbol))],
+  dateRange: { from: dateFrom, to: dateTo },
 };
 fs.writeFileSync(process.env.RESEARCH_OUTPUT_PATH, JSON.stringify(result));
 ```
@@ -146,15 +182,18 @@ The platform validates the file and publishes it under `result` in the final
 
 ## Execution Model
 
-The backtest platform does the following:
+For a backtest, the platform validates the project before processing data. It
+requires a callable `onBar(bar, context)`, loads the selected strategy, streams
+bars one by one, simulates returned orders, and produces a report.
 
-1. Clones your repository.
-2. Detects the strategy entrypoint.
-3. Installs dependencies if needed.
-4. Builds the project if configured.
-5. Streams bars into your strategy one by one.
-6. Executes returned orders against the current bar snapshot.
-7. Produces metrics, trades, positions, and an equity curve report.
+The platform does the following:
+
+1. Detects the strategy entrypoint.
+2. Installs declared dependencies if needed.
+3. Builds the project if configured.
+4. Streams bars into the strategy one by one.
+5. Executes returned orders against the current bar snapshot.
+6. Produces metrics, trades, positions, and an equity curve report.
 
 The selected timeframe in the UI or API, such as `15m`, `1h`, or `1d`,
 controls how often `onBar()` is called.
@@ -198,7 +237,7 @@ Use it for:
 - debugging
 - final metric inspection
 
-Do not use it to place trades. The runner does not execute end-of-run orders.
+Do not use it to place trades. The simulation does not execute end-of-run orders.
 
 ## Market Data Available To The Strategy
 
@@ -207,7 +246,7 @@ invocation of `onBar(bar, context)` receives the current market snapshot.
 
 ### Always Available Normalized Fields
 
-These fields are normalized by the backtest runner and are the safest values to
+These fields are normalized by the backtest platform and are the safest values to
 use in strategy code:
 
 - `bar.time`: ISO UTC timestamp string
@@ -327,9 +366,7 @@ used internally by `context.findOption(...)` and `context.findOptions(...)`.
 
 ### Greeks
 
-If the upstream data already contains Greeks, the runner uses them.
-If not, the runner estimates them so the strategy can still filter by delta,
-gamma, theta, and vega.
+Use the supplied Greeks to filter contracts by delta, gamma, theta, and vega.
 
 This makes filters like `minDelta: 0.10` safe to use even when the original
 dataset is incomplete.
@@ -465,7 +502,7 @@ Important:
 - do not send negative quantities
 - `instrumentType` should be `OPTION` or `STOCK`
 
-If `expiration`, `strike`, or `right` are present, the runner usually infers
+If `expiration`, `strike`, or `right` are present, the platform usually infers
 that the order is an option order even if `instrumentType` is omitted. Still,
 AI tools should include `instrumentType` explicitly for clarity.
 
@@ -548,7 +585,7 @@ This allows AI-generated strategies to:
 
 ## Execution And Fill Model
 
-The runner currently simulates fills as follows:
+The simulation currently models fills as follows:
 
 - stock orders fill from the underlying bar price
 - option orders fill from the option contract mark
@@ -563,12 +600,12 @@ engine, not a tick-perfect execution simulator.
 
 ## Dependency Support
 
-The runner can bundle more than a single strategy file.
+Projects can contain helper modules in addition to the entrypoint.
 
 ### Python
 
 If the strategy is inside a Python project and a `requirements.txt` file exists
-near the strategy entrypoint, the runner installs it automatically.
+near the strategy entrypoint, dependencies are installed automatically.
 
 Typical layout:
 
@@ -580,10 +617,18 @@ strategy-py/
   risk.py
 ```
 
+The template includes `pandas` and a 10-bar EMA example in
+`strategy-py/strategy.py`. Calculate indicators from the bars received by
+`onBar`; do not fetch indicator values or prices from another service.
+
 ### JavaScript / Node
 
 If the strategy lives inside a Node project and a `package.json` file exists,
-the runner installs dependencies automatically.
+dependencies are installed automatically.
+
+The template includes `technicalindicators` and a 10-bar EMA example in
+`strategy-js/strategy.js`. Use it as a pattern for local calculations from the
+bars already supplied to `onBar`; do not fetch indicators or prices yourself.
 
 Typical layout:
 

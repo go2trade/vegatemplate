@@ -1,6 +1,12 @@
+import pandas as pd
+
+EMA_PERIOD = 10
+
+
 def init(context):
     context.log("Multi-ticker Option expert strategy initialized")
     context.entered = False
+    context.primary_prices = []
 
 def onBar(bar, context):
     """
@@ -12,6 +18,13 @@ def onBar(bar, context):
     # 1. Access the primary asset bar data
     primary_symbol = bar.get("symbol")
     primary_price = bar.get("price")
+    context.primary_prices.append(primary_price)
+    if len(context.primary_prices) > EMA_PERIOD:
+        context.primary_prices.pop(0)
+    if len(context.primary_prices) < EMA_PERIOD:
+        context.log(f"Collecting {EMA_PERIOD}-bar EMA history for {primary_symbol}.")
+        return
+    ema = pd.Series(context.primary_prices, dtype="float64").ewm(span=EMA_PERIOD, adjust=False).mean().iloc[-1]
     
     # 2. Access the secondary asset(s) data via bar["tickers"]
     tickers = bar.get("tickers", {})
@@ -23,10 +36,10 @@ def onBar(bar, context):
         return
         
     tsla_price = tsla_bar.get("price")
-    context.log(f"Current {primary_symbol} Price: {primary_price} | TSLA Price: {tsla_price}")
+    context.log(f"Current {primary_symbol} Price: {primary_price} | {EMA_PERIOD}-EMA: {ema:.2f} | TSLA Price: {tsla_price}")
     
     # 3. Decision logic: if TSLA price crosses a threshold, open a spread on TSLA or primary symbol
-    if not context.entered and tsla_price > 200.0:
+    if not context.entered and primary_price > ema and tsla_price > 200.0:
         # Get expiration dates for TSLA options
         tsla_chain = tsla_bar.get("optionChain", {})
         tsla_expirations = list(tsla_chain.keys())

@@ -1,0 +1,14 @@
+{
+  "bundleVersion": 1,
+  "backtest": {
+    "active": "true",
+    "language": "js",
+    "entrypoint": "strategy-js/strategy.js",
+    "workingDirectory": "strategy-js"
+  },
+  "research": {
+    "language": "py",
+    "entrypoint": "research-py/research.py",
+    "workingDirectory": "research-py"
+  }
+}
