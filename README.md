@@ -12,7 +12,8 @@ The platform supports two distinct run types:
 - **Research**: run a free-form Python or JavaScript program over the raw
   historical JSONL data and return any valid JSON result.
 
-Backtests use the `init`, `onBar`, and `onEnd` lifecycle documented below.
+Backtests use the `init`, `onBar`, `onExpiration`, `onMarginCall`, and `onEnd`
+lifecycle documented below.
 Research scripts do not use that lifecycle and are documented in
 [Free-form Research](#free-form-research).
 
@@ -226,6 +227,10 @@ This is the main trading hook. Use it to:
 - decide whether to enter, adjust, or exit positions
 - return orders or call `context.order(...)` / `context.spread(...)`
 
+For an option's price or Greeks, call `context.get_option_analytics(contract)`
+(`context.getOptionAnalytics(contract)` in JavaScript). The result is cached
+for that contract during the current bar and refreshed on the next bar.
+
 ### `onEnd(summary, context)`
 
 Called once after the simulation finishes.
@@ -238,6 +243,36 @@ Use it for:
 - final metric inspection
 
 Do not use it to place trades. The simulation does not execute end-of-run orders.
+
+### `onExpiration(event, context)`
+
+Optional. Called when one or more open option positions reach their expiration
+cutoff, before the engine applies the selected expiration model. `event.positions`
+contains the expiring positions. It may return closing or rolling orders.
+
+Set the request's `expirationModel` to one of:
+
+- `cash_settle` (default): close at intrinsic value and transfer cash only.
+- `exercise_assign`: an in-the-money stock option becomes the corresponding
+  stock transaction at its strike. Long Call buys stock, Long Put sells stock,
+  Short Call sells stock, and Short Put buys stock. Out-of-the-money options
+  still expire worthless.
+
+### `onMarginCall(event, context)`
+
+Optional. Enabled only with `margin: { "enabled": true }` in the request. It is
+called when required margin exceeds equity. `event.margin` contains `required`,
+`equity`, `deficit`, and `grossExposure`. Return orders to reduce the deficit.
+The engine never rejects an order or liquidates a position because of this
+status. Your strategy alone decides whether and how to reduce risk.
+
+This is a transparent approximation, not a broker-specific margin engine. The
+optional `margin` object accepts `longStockRate` (default `0.50`),
+`shortStockRate` (default `0.50`), `coveredShortStockRate` (default `0.10`),
+`shortOptionRate` (default `0.20`), and `coveredShortOptionRate` (default
+`0.10`). A short stock position is treated as covered when long Calls on the
+same symbol cover its share count. A short option is treated as covered by a
+defined-risk long option of the same right and expiration.
 
 ## Market Data Available To The Strategy
 
@@ -554,6 +589,7 @@ The snapshot includes:
 - `realizedPnl`
 - `unrealizedPnl`
 - `marketValue`
+- `grossMarketValue`
 - `exposure.netDelta`
 - `exposure.netGamma`
 - `exposure.netTheta`
@@ -583,6 +619,35 @@ This allows AI-generated strategies to:
 - flatten exposure before expiration
 - enforce net delta or vega limits
 
+## Option Expiration: Cash Settlement
+
+The default backtest model uses **cash settlement** for options. It does **not**
+exercise or assign options into stock positions unless the request explicitly
+sets `expirationModel` to `exercise_assign`.
+
+At 20:00 UTC on the expiration date (or on the first later bar), an open option
+is closed automatically at its intrinsic value:
+
+- Call: `max(underlying price - strike, 0)`
+- Put: `max(strike - underlying price, 0)`
+
+The engine credits or debits cash, realizes the option P&L, and removes the
+option position. It never creates a long or short stock position at expiration.
+
+This also keeps the calculation simple:
+
+- A long option that expires out of the money settles at `0`; its paid premium
+  is the realized loss.
+- A short option that expires out of the money settles at `0`; its received
+  premium is the realized gain.
+- An in-the-money option settles only for its intrinsic value. The final P&L is
+  the settlement value minus the entry premium for a long position, and the
+  entry premium minus the settlement value for a short position, in both cases
+  multiplied by the contract multiplier and quantity.
+
+If a strategy must avoid this automatic settlement, it should close or roll the
+option before expiration from `onBar()`.
+
 ## Execution And Fill Model
 
 The simulation currently models fills as follows:
@@ -597,6 +662,12 @@ The simulation currently models fills as follows:
 
 AI tools should therefore treat the current system as a bar-based research
 engine, not a tick-perfect execution simulator.
+
+The results also report `maximumLeverage`: the highest per-bar ratio of gross
+market exposure to equity. Gross exposure uses absolute position values, so
+long and short legs do not offset each other for this metric. It is an
+informational risk measure; the engine does not currently reject orders or
+apply broker margin requirements based on it.
 
 ## Dependency Support
 
